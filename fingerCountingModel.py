@@ -1,131 +1,81 @@
 import cv2
-import numpy as np 
-import math
+import mediapipe as mp
+mp_drawing = mp.solutions.drawing_utils
+mp_drawing_styles = mp.solutions.drawing_styles
+mp_hands = mp.solutions.hands
 
+# For webcam input:
+cap = cv2.VideoCapture(0)
+with mp_hands.Hands(
+    model_complexity=0,
+    min_detection_confidence=0.5,
+    min_tracking_confidence=0.5) as hands:
+  while cap.isOpened():
+    success, image = cap.read()
+    if not success:
+      print("Ignoring empty camera frame.")
+      # If loading a video, use 'break' instead of 'continue'.
+      continue
 
-cap = cv2.VideoCapture(0,cv2.CAP_DSHOW)
-def nothing(x):
-    pass
+    # To improve performance, optionally mark the image as not writeable to
+    # pass by reference.
+    image.flags.writeable = False
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    results = hands.process(image)
 
-cv2.namedWindow("Color Adjustments",cv2.WINDOW_NORMAL)
-cv2.resizeWindow("Color Adjustments", (300, 300)) 
-cv2.createTrackbar("Thresh", "Color Adjustments", 0, 255, nothing)
+    # Draw the hand annotations on the image.
+    image.flags.writeable = True
+    image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+    # Initially set finger count to 0 for each cap
+    fingerCount = 0
 
+    if results.multi_hand_landmarks:
 
+      for hand_landmarks in results.multi_hand_landmarks:
+        # Get hand index to check label (left or right)
+        handIndex = results.multi_hand_landmarks.index(hand_landmarks)
+        handLabel = results.multi_handedness[handIndex].classification[0].label
 
-cv2.createTrackbar("Lower_H", "Color Adjustments", 0, 255, nothing)
-cv2.createTrackbar("Lower_S", "Color Adjustments", 0, 255, nothing)
-cv2.createTrackbar("Lower_V", "Color Adjustments", 0, 255, nothing)
-cv2.createTrackbar("Upper_H", "Color Adjustments", 255, 255, nothing)
-cv2.createTrackbar("Upper_S", "Color Adjustments", 255, 255, nothing)
-cv2.createTrackbar("Upper_V", "Color Adjustments", 255, 255, nothing)
+        # Set variable to keep landmarks positions (x and y)
+        handLandmarks = []
 
+        # Fill list with x and y positions of each landmark
+        for landmarks in hand_landmarks.landmark:
+          handLandmarks.append([landmarks.x, landmarks.y])
 
-while True:
-    _,frame = cap.read()
-    frame = cv2.flip(frame,2)
-    frame = cv2.resize(frame,(600,500))
-    
-    cv2.rectangle(frame, (0,1), (300,500), (255, 0, 0), 0)
-    crop_image = frame[1:500, 0:300]
-    
-    
-    hsv = cv2.cvtColor(crop_image, cv2.COLOR_BGR2HSV)
-    
-    l_h = cv2.getTrackbarPos("Lower_H", "Color Adjustments")
-    l_s = cv2.getTrackbarPos("Lower_S", "Color Adjustments")
-    l_v = cv2.getTrackbarPos("Lower_V", "Color Adjustments")
+        # Test conditions for each finger: Count is increased if finger is 
+        #   considered raised.
+        # Thumb: TIP x position must be greater or lower than IP x position, 
+        #   deppeding on hand label.
+        if handLabel == "Left" and handLandmarks[4][0] > handLandmarks[3][0]:
+          fingerCount = fingerCount+1
+        elif handLabel == "Right" and handLandmarks[4][0] < handLandmarks[3][0]:
+          fingerCount = fingerCount+1
 
-    u_h = cv2.getTrackbarPos("Upper_H", "Color Adjustments")
-    u_s = cv2.getTrackbarPos("Upper_S", "Color Adjustments")
-    u_v = cv2.getTrackbarPos("Upper_V", "Color Adjustments")
-    
-    
-    lower_bound = np.array([l_h, l_s, l_v])
-    upper_bound = np.array([u_h, u_s, u_v])
-    
-    
-    mask = cv2.inRange(hsv, lower_bound, upper_bound)
-    
-    filtr = cv2.bitwise_and(crop_image, crop_image, mask=mask)
-    
-    
-    mask1  = cv2.bitwise_not(mask)
-    m_g = cv2.getTrackbarPos("Thresh", "Color Adjustments") 
-    ret,thresh = cv2.threshold(mask1,m_g,255,cv2.THRESH_BINARY)
-    dilata = cv2.dilate(thresh,(3,3),iterations = 6)
-    
-    
-    cnts,hier = cv2.findContours(thresh,cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)
-    
-    
-    try:
-        #print("try")
-        
-    
-        cm = max(cnts, key=lambda x: cv2.contourArea(x))
-        #print("C==",cnts)
-        epsilon = 0.0005*cv2.arcLength(cm,True)
-        data= cv2.approxPolyDP(cm,epsilon,True)
-        
-        hull = cv2.convexHull(cm)
-        
-        cv2.drawContours(crop_image, [cm], -1, (50, 50, 150), 2)
-        cv2.drawContours(crop_image, [hull], -1, (0, 255, 0), 2)
-        
-        
-        hull = cv2.convexHull(cm, returnPoints=False)
-        defects = cv2.convexityDefects(cm, hull)
-        count_defects = 0
-        #print("Area==",cv2.contourArea(hull) - cv2.contourArea(cm))
-        for i in range(defects.shape[0]):
-            s,e,f,d = defects[i,0]
-           
-            start = tuple(cm[s][0])
-            end = tuple(cm[e][0])
-            far = tuple(cm[f][0])
-            
-            
-            a = math.sqrt((end[0] - start[0]) ** 2 + (end[1] - start[1]) ** 2)
-            b = math.sqrt((far[0] - start[0]) ** 2 + (far[1] - start[1]) ** 2)
-            c = math.sqrt((end[0] - far[0]) ** 2 + (end[1] - far[1]) ** 2)
-            angle = (math.acos((b ** 2 + c ** 2 - a ** 2) / (2 * b * c)) * 180) / 3.14
-            #print(angle)
-            # if angle > 50 draw a circle at the far point
-            if angle <= 50:
-                count_defects += 1
-                cv2.circle(crop_image,far,5,[255,255,255],-1)
-        
-        print("count==",count_defects)
-        
-        #Step - 9
-        if count_defects == 0:
-            
-            cv2.putText(frame, "1", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 2,(0,0,255),2)
-        elif count_defects == 1:
-            cv2.putText(frame, "2", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 2,(0,0,255), 2)
-        elif count_defects == 2:
-            
-            cv2.putText(frame, "3", (5, 50), cv2.FONT_HERSHEY_SIMPLEX, 2,(0,0,255), 2)
-        elif count_defects == 3:
-            
-            cv2.putText(frame, "4", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 2,(0,0,255), 2)
-        elif count_defects == 4:
-            
-            cv2.putText(frame, "5", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 2,(0,0,255), 2)
-        else:
-            pass
-           
-    except:
-        pass
-        
-    cv2.imshow("Thresh", thresh)
-    #cv2.imshow("mask==",mask)
-    cv2.imshow("filter==",filtr)
-    cv2.imshow("Result", frame)
+        # Other fingers: TIP y position must be lower than PIP y position, 
+        #   as image origin is in the upper left corner.
+        if handLandmarks[8][1] < handLandmarks[6][1]:       #Index finger
+          fingerCount = fingerCount+1
+        if handLandmarks[12][1] < handLandmarks[10][1]:     #Middle finger
+          fingerCount = fingerCount+1
+        if handLandmarks[16][1] < handLandmarks[14][1]:     #Ring finger
+          fingerCount = fingerCount+1
+        if handLandmarks[20][1] < handLandmarks[18][1]:     #Pinky
+          fingerCount = fingerCount+1
 
-    key = cv2.waitKey(25) &0xFF
-    if key == 27:
-        break
+        # Draw hand landmarks 
+        mp_drawing.draw_landmarks(
+            image,
+            hand_landmarks,
+            mp_hands.HAND_CONNECTIONS,
+            mp_drawing_styles.get_default_hand_landmarks_style(),
+            mp_drawing_styles.get_default_hand_connections_style())
+
+    # Display finger count
+    cv2.putText(image, str(fingerCount), (50, 450), cv2.FONT_HERSHEY_SIMPLEX, 3, (255, 0, 0), 10)
+
+    # Display image
+    cv2.imshow('MediaPipe Hands', image)
+    if cv2.waitKey(5) & 0xFF == 27:
+      break
 cap.release()
-cv2.destroyAllWindows()
